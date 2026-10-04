@@ -3,6 +3,11 @@
 Statyczny hero (HTML + CSS + GSAP 3.12.5 z cdnjs) odtwarzający referencję Dribbble (bluebird → zimorodek).
 Treści: zimorodek.pl/aplikacje. Marka: #0080D1, #004978, akcent #E07C00; logo w `assets/logo-zimorodek.svg` (pełna nazwa, kolor).
 
+## Repozytorium i podgląd
+- Repo (publiczne): https://github.com/Brand-designer-pl/zimorodek-hero-aplikacje
+- Podgląd dla klienta (GitHub Pages z gałęzi main): https://brand-designer-pl.github.io/zimorodek-hero-aplikacje/
+- Po zmianach: podbij `?v=` w index.html, commit i push na main — Pages przebuduje się sam (ok. 1 min).
+
 ## Pliki
 - `index.html`, `style.css`, `hero.js` — strona. Skala makiety: 1 `--u` = 1 px referencji 1526×856.
 - `assets/zimorodek-wlot.mp4` — wlot ptaka (Magnific, Seedance 2.5, 5 s, ruch wg referencji, tło z jeziorem `zrodla/plate-jezioro.png`, koniec `zrodla/kadr-koncowy.png`). Odtwarzany od `START_AT`.
