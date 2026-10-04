@@ -8,6 +8,9 @@
   const left = hero.querySelectorAll('[data-hero="left"]');
   const up = hero.querySelectorAll('[data-hero="up"]');
   const replayBtn = hero.querySelector('.replay');
+  const navLogo = hero.querySelector('.nav__logo img');
+  const navLinks = hero.querySelectorAll('.nav__links a');
+  const navCta = hero.querySelector('.nav__cta');
 
   const START_AT = 0.4;    // s filmu: pomijamy puste tło na początku (krótszy wstęp)
   const UI_AT = 3.1;       // s filmu: ptak rusza na kamerę → wjeżdża UI
@@ -57,9 +60,26 @@
     gsap.to(word, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 1.6, ease: 'expo.out', delay: 0.1 });
   }
 
+  function playNav() {
+    const navEls = [navLogo, ...navLinks, navCta];
+    gsap.killTweensOf(navEls);
+    hero.classList.remove('nav-in');
+    gsap.set(navLogo, { clipPath: 'inset(0% 100% 0% 0%)', x: -34 });
+    gsap.set([...navLinks, navCta], { opacity: 0, y: -26 });
+    gsap.timeline({
+      delay: 0.25,
+      onComplete: () => { hero.classList.add('nav-in'); gsap.set(navEls, { clearProps: 'all' }); },
+    })
+      .to(navLogo, { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.55, ease: 'power2.out' }, 0)
+      .to(navLogo, { x: 0, duration: 1.1, ease: 'expo.out' }, 0)
+      .to(navLinks, { opacity: 1, y: 0, duration: 0.7, ease: 'expo.out', stagger: 0.055 }, 0.15)
+      .to(navCta, { opacity: 1, y: 0, duration: 0.7, ease: 'expo.out' }, 0.15 + navLinks.length * 0.055);
+  }
+
   function start() {
     if (typeof mode !== 'undefined' && mode !== 'hero') return;   // powtórka tylko w stanie hero
     resetState();
+    playNav();
     video.currentTime = START_AT;
     const p = video.play();
     if (p && p.catch) p.catch(() => { finish(); });   // autoplay zablokowany → stan końcowy

@@ -594,3 +594,7 @@ html.is-locked, html.is-locked body { overflow: hidden; overscroll-behavior: non
 
 /* stan startowy animacji (ukryte do czasu startu GSAP; .is-static przywraca) */
 .anim .hero:not(.is-static):not(.ui-in) [data-hero] { opacity: 0; }
+/* nawigacja przed animacją wejścia (bez mignięcia); .nav-in po zakończeniu */
+.anim .hero:not(.is-static):not(.nav-in) .nav__links a,
+.anim .hero:not(.is-static):not(.nav-in) .nav__cta { opacity: 0; }
+.anim .hero:not(.is-static):not(.nav-in) .nav__logo img { clip-path: inset(0 100% 0 0); }
