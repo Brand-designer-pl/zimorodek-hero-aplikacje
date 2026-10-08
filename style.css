@@ -320,11 +320,17 @@ img { display: block; }
 .card--stat .card__text { position: absolute; left: calc(var(--u) * 82); top: calc(var(--u) * 122); }
 
 /* ---------- powtórka ---------- */
-.replay {
+.hero-ctrl {
   position: absolute;
   z-index: 6;
   left: calc(var(--u) * 47);
   bottom: calc(var(--u) * 30);
+  display: flex; align-items: center; gap: 8px;
+  opacity: 0;
+  transition: opacity .4s;
+}
+.hero:hover .hero-ctrl, .hero-ctrl:focus-within { opacity: 1; }
+.replay {
   width: 30px; height: 30px;
   border-radius: 50%;
   border: 1px solid rgba(0,73,120,.25);
@@ -332,12 +338,8 @@ img { display: block; }
   color: var(--ink);
   display: grid; place-items: center;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity .4s;
 }
 .replay svg { width: 14px; height: 14px; }
-.hero:hover .replay, .replay:focus-visible { opacity: 1; }
-
 :focus-visible { outline: 2px solid var(--brand-accent); outline-offset: 3px; }
 
 /* ---------- czytelność lewej kolumny ---------- */
@@ -512,7 +514,7 @@ html.is-locked, html.is-locked body { overflow: hidden; overscroll-behavior: non
   .stat__unit { font-size: 32px; }
   .card--stat .card__text { left: 20px; top: 112px; }
   .card--stat .card__text br { display: none; }
-  .replay { display: none; }
+  .hero-ctrl { display: none; }
 }
 
 /* ---------- telefon w trybie animacji: wszystko w jednym ekranie ---------- */

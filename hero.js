@@ -12,8 +12,9 @@
   const navLinks = hero.querySelectorAll('.nav__links a');
   const navCta = hero.querySelector('.nav__cta');
 
-  const START_AT = 0.4;    // s filmu: pomijamy puste tło na początku (krótszy wstęp)
-  const UI_AT = 3.1;       // s filmu: ptak rusza na kamerę → wjeżdża UI
+  // wlot: nowy film 3 s (start od klatki 0); uiAt — ptak rusza na kamerę → wjeżdża UI
+  const ver = { still: 'assets/zimorodek-hero.webp?v=20', start: 0, uiAt: 1.0, track: 'wlot', diveFade: 0.3 };
+  const wordLayer = hero.querySelector('.hero__wordlayer');
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   if (!window.gsap || reduce.matches) {
@@ -32,6 +33,7 @@
     hero.classList.remove('ui-in');
     gsap.killTweensOf([still, word, ...left, ...up]);
     gsap.set(still, { opacity: 0 });
+    gsap.set(video, { autoAlpha: 1 });
     gsap.set(word, { opacity: 0, y: 40, filter: 'blur(14px)' });
     gsap.set(left, { opacity: 0, x: -70, filter: 'blur(8px)' });
     gsap.set(up, { opacity: 0, y: 120, filter: 'blur(10px)' });
@@ -52,10 +54,18 @@
   function finish() {
     if (finished) return;
     finished = true;
+    // nawigacja musi być widoczna, nawet gdy jej wejście się nie odbyło (np. anulowany start przy nurkowaniu)
+    if (!hero.classList.contains('nav-in') && !gsap.isTweening(navLogo)) {
+      const navEls = [navLogo, ...navLinks, navCta];
+      gsap.to(navEls, { opacity: 1, y: 0, x: 0, clipPath: 'inset(0% 0% 0% 0%)', duration: 0.4, ease: 'power2.out',
+        onComplete: () => { hero.classList.add('nav-in'); gsap.set(navEls, { clearProps: 'all' }); } });
+    }
     playUI();
     // Film zatrzymuje się na ostatniej klatce i zostaje na ekranie — nic go nie podmienia ani nie
     // przykrywa. Napis chowa się za ptakiem dzięki masce (.hero__wordlayer), więc ptak to zawsze wideo.
-    if (!video.ended) gsap.set(still, { opacity: 1 });   // tylko gdy wideo nie ruszyło (autoplay/błąd)
+    // Wideo nie ruszyło (np. Safari zablokował autoodtwarzanie): pokaż kadr końcowy i schowaj element wideo —
+    // inaczej wideo zasłania kadr swoim pierwszym obrazem (puste tło bez ptaka).
+    if (!video.ended) showStill(ver.still);
     if (diveQueued) { diveQueued = false; goDive(); return; }
     gsap.to(word, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 1.6, ease: 'expo.out', delay: 0.1 });
   }
@@ -76,17 +86,23 @@
       .to(navCta, { opacity: 1, y: 0, duration: 0.7, ease: 'expo.out' }, 0.15 + navLinks.length * 0.055);
   }
 
+  function showStill(src) {
+    if (src && still.getAttribute('src') !== src) still.src = src;
+    gsap.set(still, { opacity: 1 });
+    gsap.set(video, { autoAlpha: 0 });
+  }
+
   function start() {
     if (typeof mode !== 'undefined' && mode !== 'hero') return;   // powtórka tylko w stanie hero
     resetState();
     playNav();
-    video.currentTime = START_AT;
+    video.currentTime = ver.start;
     const p = video.play();
     if (p && p.catch) p.catch(() => { finish(); });   // autoplay zablokowany → stan końcowy
   }
 
   video.addEventListener('timeupdate', () => {
-    if (!uiPlayed && video.currentTime >= UI_AT) playUI();
+    if (!uiPlayed && video.currentTime >= ver.uiAt) playUI();
   });
   video.addEventListener('ended', finish);
   // przeglądarka potrafi wstrzymać wyciszone wideo (karta w tle, oszczędzanie energii) — wznawiamy
@@ -96,6 +112,17 @@
   video.addEventListener('pause', () => setTimeout(resume, 150));
   document.addEventListener('visibilitychange', () => { if (!document.hidden) resume(); });
   video.addEventListener('error', finish);
+
+  // najwyżej jeden oczekujący start po załadowaniu wideo (szybkie przełączanie wersji nie może go zdublować)
+  let pendingStart = null;
+  function cancelPendingStart() {
+    if (pendingStart) { video.removeEventListener('loadeddata', pendingStart); pendingStart = null; }
+  }
+  function startWhenReady() {
+    cancelPendingStart();
+    pendingStart = () => { pendingStart = null; start(); };
+    video.addEventListener('loadeddata', pendingStart, { once: true });
+  }
 
   replayBtn.addEventListener('click', start);
   window.addEventListener('keydown', (e) => {
@@ -132,10 +159,10 @@
   const scene = document.getElementById('scene');
   const diveVideo = hero.querySelector('.hero__dive');
   const diveItems = scene.querySelectorAll('[data-dive]');
-  const replay = hero.querySelector('.replay');
+  const replay = hero.querySelector('.hero-ctrl');
   const DIVE_START = 0;     // klatka 0 filmu 2 = ostatnia klatka filmu 1 (różnica tylko kompresji)
-  const DIVE_RATE = 1.1;     // lekko szybciej — dynamiczne przejście (plik ma już przyspieszony start i lot)
-  const DIVE_UI_BEFORE = 0.9; // s przed końcem filmu wjeżdża treść sekcji
+  const DIVE_RATE = 1;       // nowe ciągłe ujęcie 2,9 s (tempo dopasowane w pliku)
+  const DIVE_UI_BEFORE = 0.7;  // s przed końcem filmu wjeżdża treść sekcji
 
   function heroOut() {
     gsap.killTweensOf([word, ...left, ...up]);
@@ -155,11 +182,20 @@
         onComplete: () => gsap.set(diveItems, { clearProps: 'transform,filter' }) });
   }
 
+  // ostatnia klatka intro (przeskok dokładnie na duration bywa odrzucany przez przeglądarkę)
+  function toLastFrame() {
+    if (video.duration && video.currentTime < video.duration - 0.08) video.currentTime = video.duration - 0.04;
+  }
+
   function goDive() {
     if (mode !== 'hero') return;
+    cancelPendingStart();
     if (!finished) {                       // intro jeszcze trwa → dokończ je od razu i nurkuj
+      // nie czekamy na zdarzenie „ended” — przy wstrzymanym wideo (oszczędzanie energii) by nie przyszło
       diveQueued = true;
-      video.currentTime = video.duration || 99;
+      video.pause();
+      toLastFrame();
+      finish();
       return;
     }
     mode = 'diving';
@@ -169,13 +205,22 @@
     diveVideo.currentTime = DIVE_START;
     diveVideo.playbackRate = DIVE_RATE;
     // pierwsza klatka filmu 2 = ostatnia klatka filmu 1; krótkie przenikanie maskuje kompresję
-    gsap.to(diveVideo, { opacity: 1, duration: 0.3, ease: "none" });
-    diveVideo.play().catch(() => { gsap.set(diveVideo, { opacity: 0 }); mode = 'dived'; lock(false); diveIn(); });
+    gsap.to(diveVideo, { opacity: 1, duration: ver.diveFade, ease: "none" });
+    diveVideo.play().catch(() => {           // nurkowanie zablokowane → od razu stop-klatka pod wodą
+      gsap.killTweensOf(diveVideo); gsap.set(diveVideo, { opacity: 0 });
+      showStill('assets/pod-woda.webp?v=20');
+      mode = 'dived'; lock(false); diveIn();
+    });
   }
 
   function goHero() {
     if (mode === 'hero') return;
     mode = 'hero';
+    toLastFrame();
+    // zabezpieczenie: wideo intro niewidoczne albo nie na końcu (wstrzymane / zablokowane) → kadr końcowy
+    const videoOk = gsap.getProperty(video, 'autoAlpha') > 0 && video.duration && video.currentTime >= video.duration - 0.1;
+    if (videoOk) { still.src = ver.still; gsap.set(still, { opacity: 0 }); }
+    else showStill(ver.still);
     lock(true);
     lockedUntil = performance.now() + 1100;
     setTimeout(() => lock(false), 1100);
@@ -247,9 +292,8 @@
 
   // ---------- telefon: okno kadru podąża za ptakiem (filmy są poziome, ekran pionowy) ----------
   const mobile = window.matchMedia('(max-width: 760px)');
-  const wordLayer = hero.querySelector('.hero__wordlayer');
   let track = null, camP = null;
-  fetch('assets/tor-ptaka.json?v=2').then((r) => r.json()).then((j) => { track = j; }).catch(() => {});
+  fetch('assets/tor-ptaka.json?v=8').then((r) => r.json()).then((j) => { track = j; }).catch(() => {});
 
   function birdX(name, el) {
     const t = track && track[name];
@@ -268,7 +312,7 @@
     requestAnimationFrame(frame);
     if (!mobile.matches || !track) return;
     const active = mode === 'hero' ? video : diveVideo;
-    const target = posFor(birdX(mode === 'hero' ? 'wlot' : 'nurek', active), active);
+    const target = posFor(birdX(mode === 'hero' ? ver.track : 'nurek', active), active);
     camP = camP === null ? target : camP + (target - camP) * 0.22;
     const v = camP.toFixed(2) + '% 50%';
     video.style.objectPosition = v; diveVideo.style.objectPosition = v; still.style.objectPosition = v;
@@ -281,5 +325,5 @@
   });
 
   if (video.readyState >= 2) start();
-  else video.addEventListener('loadeddata', start, { once: true });
+  else startWhenReady();
 })();
