@@ -26,8 +26,11 @@
   let finished = false;
   let mode = 'hero';       // hero → diving → dived
   let diveQueued = false;
+  let uiTl = null;         // animacja wejścia UI — przerywana przy nurkowaniu (inaczej jej koniec przywraca hero nad sekcją 2)
+  let watchdog = null;     // iPhone: gdy film nie ruszy, po chwili pokaż kadr końcowy
 
   function resetState() {
+    if (uiTl) { uiTl.kill(); uiTl = null; }
     uiPlayed = false;
     finished = false;
     hero.classList.remove('ui-in');
@@ -43,9 +46,13 @@
     if (uiPlayed) return;
     uiPlayed = true;
     // po wejściu czyścimy transform/filter, żeby działały animacje :hover z CSS
-    const tl = gsap.timeline({
+    const tl = uiTl = gsap.timeline({
       defaults: { ease: 'expo.out', duration: 1.25 },
-      onComplete: () => { hero.classList.add('ui-in'); gsap.set([...left, ...up], { clearProps: 'transform,filter,opacity' }); },
+      onComplete: () => {
+        uiTl = null;
+        if (mode !== 'hero') return;                 // w trakcie nurkowania nie przywracamy hero
+        hero.classList.add('ui-in'); gsap.set([...left, ...up], { clearProps: 'transform,filter,opacity' });
+      },
     });
     tl.to(left, { opacity: 1, x: 0, filter: 'blur(0px)', stagger: 0.09 }, 0)
       .to(up, { opacity: 1, y: 0, filter: 'blur(0px)', stagger: 0.12, duration: 1.4 }, 0.1);
@@ -96,9 +103,14 @@
     if (typeof mode !== 'undefined' && mode !== 'hero') return;   // powtórka tylko w stanie hero
     resetState();
     playNav();
-    video.currentTime = ver.start;
+    if (ver.start) { try { video.currentTime = ver.start; } catch (e) {} }
+    // iPhone nie buforuje wideo z wyprzedzeniem — play() od razu, bez czekania na „loadeddata”
     const p = video.play();
     if (p && p.catch) p.catch(() => { finish(); });   // autoplay zablokowany → stan końcowy
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {                    // film nie ruszył (np. tryb oszczędzania energii) → kadr końcowy
+      if (!finished && video.currentTime < 0.05) { video.pause(); finish(); }
+    }, 3000);
   }
 
   video.addEventListener('timeupdate', () => {
@@ -117,11 +129,6 @@
   let pendingStart = null;
   function cancelPendingStart() {
     if (pendingStart) { video.removeEventListener('loadeddata', pendingStart); pendingStart = null; }
-  }
-  function startWhenReady() {
-    cancelPendingStart();
-    pendingStart = () => { pendingStart = null; start(); };
-    video.addEventListener('loadeddata', pendingStart, { once: true });
   }
 
   replayBtn.addEventListener('click', start);
@@ -165,6 +172,7 @@
   const DIVE_UI_BEFORE = 0.7;  // s przed końcem filmu wjeżdża treść sekcji
 
   function heroOut() {
+    if (uiTl) { uiTl.kill(); uiTl = null; }
     gsap.killTweensOf([word, ...left, ...up]);
     return gsap.timeline({ defaults: { duration: 0.45, ease: 'power2.in' } })
       .to(word, { opacity: 0, y: -30, filter: 'blur(10px)' }, 0)
@@ -324,6 +332,5 @@
     if (!mobile.matches) { wordLayer.style.webkitMaskPosition = ''; wordLayer.style.maskPosition = ''; }
   });
 
-  if (video.readyState >= 2) start();
-  else startWhenReady();
+  start();                                           // bez czekania na buforowanie (iOS)
 })();
