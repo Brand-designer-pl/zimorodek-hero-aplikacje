@@ -17,6 +17,60 @@
   const wordLayer = hero.querySelector('.hero__wordlayer');
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
 
+  // ---------- zamiennik wideo: sekwencja klatek na <canvas> ----------
+  // iOS w trybie oszczędzania energii (i niektóre ustawienia Safari) blokuje KAŻDE wideo, także wyciszone.
+  // Rysowanie obrazków na canvasie nie podlega tej blokadzie — ta sama animacja, to samo tempo.
+  // Klatki pobieramy dopiero, gdy wideo odmówi odtwarzania (zwykłe urządzenia nic dodatkowo nie pobierają).
+  class SeqPlayer extends EventTarget {
+    constructor(dir, count, fps, beforeEl) {
+      super();
+      this.dir = dir; this.count = count; this.fps = fps;
+      this.duration = count / fps; this.videoWidth = 1920; this.videoHeight = 1072;
+      this.frames = []; this.loaded = null; this.raf = 0; this.t0 = 0;
+      this.currentTime = 0; this.ended = false; this.paused = true; this.active = false;
+      const c = this.el = document.createElement('canvas');
+      c.width = 1920; c.height = 1072; c.className = 'hero__seq'; c.setAttribute('aria-hidden', 'true');
+      beforeEl.after(c);
+      this.ctx = c.getContext('2d');
+    }
+    get clientWidth() { return this.el.clientWidth; }
+    get clientHeight() { return this.el.clientHeight; }
+    load() {
+      if (!this.loaded) {
+        this.loaded = Promise.all(Array.from({ length: this.count }, (_, i) => new Promise((res, rej) => {
+          const im = new Image();
+          im.onload = () => res(im); im.onerror = rej;
+          im.src = `${this.dir}/${String(i).padStart(3, '0')}.webp?v=1`;
+          this.frames[i] = im;
+        })));
+      }
+      return this.loaded;
+    }
+    draw(i) { const im = this.frames[Math.max(0, Math.min(this.count - 1, i))]; if (im && im.complete) this.ctx.drawImage(im, 0, 0, 1920, 1072); }
+    play() {
+      return this.load().then(() => {
+        this.active = true; this.ended = false; this.paused = false;
+        this.t0 = performance.now() - this.currentTime * 1000;
+        const tick = () => {
+          if (this.paused) return;
+          this.currentTime = Math.min(this.duration, (performance.now() - this.t0) / 1000);
+          this.draw(Math.floor(this.currentTime * this.fps));
+          this.dispatchEvent(new Event('timeupdate'));
+          if (this.currentTime >= this.duration) {
+            this.paused = true; this.ended = true; this.draw(this.count - 1);
+            this.dispatchEvent(new Event('ended')); return;
+          }
+          this.raf = requestAnimationFrame(tick);
+        };
+        this.draw(Math.floor(this.currentTime * this.fps));
+        this.raf = requestAnimationFrame(tick);
+      });
+    }
+    pause() { this.paused = true; cancelAnimationFrame(this.raf); }
+    toEnd() { this.pause(); this.currentTime = this.duration; this.ended = true; if (this.frames.length) this.draw(this.count - 1); }
+    reset() { this.pause(); this.currentTime = 0; this.ended = false; this.active = false; }
+  }
+
   if (!window.gsap || reduce.matches) {
     hero.classList.add('is-static');
     return;
@@ -26,6 +80,8 @@
   let finished = false;
   let mode = 'hero';       // hero → diving → dived
   let diveQueued = false;
+  const introSeq = new SeqPlayer('assets/seq/wlot', 74, 24, video);
+  let useSeqIntro = false;  // wideo wejścia zablokowane → gra sekwencja klatek
   let uiTl = null;         // animacja wejścia UI — przerywana przy nurkowaniu (inaczej jej koniec przywraca hero nad sekcją 2)
   let watchdog = null;     // iPhone: gdy film nie ruszy, po chwili pokaż kadr końcowy
 
@@ -37,6 +93,7 @@
     gsap.killTweensOf([still, word, ...left, ...up]);
     gsap.set(still, { opacity: 0 });
     gsap.set(video, { autoAlpha: 1 });
+    introSeq.reset(); useSeqIntro = false; gsap.set(introSeq.el, { autoAlpha: 0 });
     gsap.set(word, { opacity: 0, y: 40, filter: 'blur(14px)' });
     gsap.set(left, { opacity: 0, x: -70, filter: 'blur(8px)' });
     gsap.set(up, { opacity: 0, y: 120, filter: 'blur(10px)' });
@@ -72,7 +129,7 @@
     // przykrywa. Napis chowa się za ptakiem dzięki masce (.hero__wordlayer), więc ptak to zawsze wideo.
     // Wideo nie ruszyło (np. Safari zablokował autoodtwarzanie): pokaż kadr końcowy i schowaj element wideo —
     // inaczej wideo zasłania kadr swoim pierwszym obrazem (puste tło bez ptaka).
-    if (!video.ended) showStill(ver.still);
+    if (!video.ended && !(useSeqIntro && introSeq.ended)) showStill(ver.still);
     if (diveQueued) { diveQueued = false; goDive(); return; }
     gsap.to(word, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 1.6, ease: 'expo.out', delay: 0.1 });
   }
@@ -106,24 +163,40 @@
     if (ver.start) { try { video.currentTime = ver.start; } catch (e) {} }
     // iPhone nie buforuje wideo z wyprzedzeniem — play() od razu, bez czekania na „loadeddata”
     const p = video.play();
-    if (p && p.catch) p.catch(() => { finish(); });   // autoplay zablokowany → stan końcowy
+    if (p && p.catch) p.catch(() => { introFallback(); });   // autoplay zablokowany → sekwencja klatek
     clearTimeout(watchdog);
-    watchdog = setTimeout(() => {                    // film nie ruszył (np. tryb oszczędzania energii) → kadr końcowy
-      if (!finished && video.currentTime < 0.05) { video.pause(); finish(); }
+    watchdog = setTimeout(() => {                    // film nie ruszył (np. tryb oszczędzania energii)
+      if (!finished && !useSeqIntro && video.currentTime < 0.05) introFallback();
     }, 3000);
+  }
+
+  // wideo wejścia nie gra → ta sama animacja z klatek; gdy i to zawiedzie → kadr końcowy
+  function introFallback() {
+    if (finished || useSeqIntro || mode !== 'hero') return;
+    useSeqIntro = true;
+    video.pause();
+    introSeq.reset(); useSeqIntro = true;
+    introSeq.play().then(() => {
+      if (!useSeqIntro) return;
+      gsap.set(introSeq.el, { autoAlpha: 1 });
+      gsap.set(video, { autoAlpha: 0 });
+      diveSeq.load();                                // od razu dociągamy też klatki nurkowania
+    }).catch(() => { useSeqIntro = false; finish(); });
   }
 
   video.addEventListener('timeupdate', () => {
     if (!uiPlayed && video.currentTime >= ver.uiAt) playUI();
   });
   video.addEventListener('ended', finish);
+  introSeq.addEventListener('timeupdate', () => { if (useSeqIntro && !uiPlayed && introSeq.currentTime >= ver.uiAt) playUI(); });
+  introSeq.addEventListener('ended', () => { if (useSeqIntro) finish(); });
   // przeglądarka potrafi wstrzymać wyciszone wideo (karta w tle, oszczędzanie energii) — wznawiamy
   const resume = () => {
-    if (!finished && video.paused && !video.ended) video.play().catch(finish);
+    if (!finished && !useSeqIntro && video.paused && !video.ended) video.play().catch(introFallback);
   };
   video.addEventListener('pause', () => setTimeout(resume, 150));
   document.addEventListener('visibilitychange', () => { if (!document.hidden) resume(); });
-  video.addEventListener('error', finish);
+  video.addEventListener('error', introFallback);
 
   // najwyżej jeden oczekujący start po załadowaniu wideo (szybkie przełączanie wersji nie może go zdublować)
   let pendingStart = null;
@@ -170,6 +243,8 @@
   const DIVE_START = 0;     // klatka 0 filmu 2 = ostatnia klatka filmu 1 (różnica tylko kompresji)
   const DIVE_RATE = 1;       // nowe ciągłe ujęcie 2,9 s (tempo dopasowane w pliku)
   const DIVE_UI_BEFORE = 0.7;  // s przed końcem filmu wjeżdża treść sekcji
+  const diveSeq = new SeqPlayer('assets/seq/nurek', 69, 24, diveVideo);
+  let useSeqDive = false;
 
   function heroOut() {
     if (uiTl) { uiTl.kill(); uiTl = null; }
@@ -203,6 +278,7 @@
       diveQueued = true;
       video.pause();
       toLastFrame();
+      if (useSeqIntro) introSeq.toEnd();
       finish();
       return;
     }
@@ -214,10 +290,19 @@
     diveVideo.playbackRate = DIVE_RATE;
     // pierwsza klatka filmu 2 = ostatnia klatka filmu 1; krótkie przenikanie maskuje kompresję
     gsap.to(diveVideo, { opacity: 1, duration: ver.diveFade, ease: "none" });
-    diveVideo.play().catch(() => {           // nurkowanie zablokowane → od razu stop-klatka pod wodą
+    useSeqDive = false;
+    diveVideo.play().catch(() => {           // nurkowanie zablokowane → sekwencja klatek
       gsap.killTweensOf(diveVideo); gsap.set(diveVideo, { opacity: 0 });
-      showStill('assets/pod-woda.webp?v=20');
-      mode = 'dived'; lock(false); diveIn();
+      useSeqDive = true;
+      diveSeq.reset(); useSeqDive = true;
+      diveSeq.play().then(() => {
+        if (mode !== 'diving') return;
+        gsap.to(diveSeq.el, { autoAlpha: 1, duration: ver.diveFade, ease: 'none' });
+      }).catch(() => {                       // nawet klatki nie doszły → od razu stop-klatka pod wodą
+        useSeqDive = false;
+        showStill('assets/pod-woda.webp?v=20');
+        mode = 'dived'; lock(false); diveIn();
+      });
     });
   }
 
@@ -226,7 +311,8 @@
     mode = 'hero';
     toLastFrame();
     // zabezpieczenie: wideo intro niewidoczne albo nie na końcu (wstrzymane / zablokowane) → kadr końcowy
-    const videoOk = gsap.getProperty(video, 'autoAlpha') > 0 && video.duration && video.currentTime >= video.duration - 0.1;
+    const videoOk = (useSeqIntro && introSeq.ended) ||
+      (gsap.getProperty(video, 'autoAlpha') > 0 && video.duration && video.currentTime >= video.duration - 0.1);
     if (videoOk) { still.src = ver.still; gsap.set(still, { opacity: 0 }); }
     else showStill(ver.still);
     lock(true);
@@ -237,12 +323,19 @@
     gsap.to(diveItems, { opacity: 0, x: 40, duration: 0.3, ease: 'power2.in',
       onComplete: () => { scene.classList.remove('is-dived'); gsap.set(diveItems, { clearProps: 'all' }); } });
     gsap.to(diveVideo, { opacity: 0, duration: 0.5, ease: 'power1.inOut', onComplete: () => diveVideo.pause() });
+    gsap.to(diveSeq.el, { autoAlpha: 0, duration: 0.5, ease: 'power1.inOut', onComplete: () => { diveSeq.reset(); useSeqDive = false; } });
     gsap.to(replay, { autoAlpha: 1, duration: 0.3, clearProps: 'all' });
     gsap.to(word, { opacity: 1, y: 0, filter: 'blur(0px)', duration: 1, ease: 'expo.out', delay: 0.2 });
     gsap.to([...left, ...up], { opacity: 1, x: 0, y: 0, filter: 'blur(0px)', duration: 1, ease: 'expo.out', stagger: 0.05, delay: 0.2,
       onComplete: () => gsap.set([...left, ...up], { clearProps: 'transform,filter,opacity' }) });
   }
 
+  diveSeq.addEventListener('timeupdate', () => {
+    if (mode === 'diving' && useSeqDive && diveSeq.currentTime >= diveSeq.duration - DIVE_UI_BEFORE) diveIn();
+  });
+  diveSeq.addEventListener('ended', () => {
+    if (mode === 'diving' && useSeqDive) { mode = 'dived'; diveIn(); lockedUntil = performance.now() + 700; lock(false); }
+  });
   diveVideo.addEventListener('timeupdate', () => {
     if (mode === 'diving' && diveVideo.duration && diveVideo.currentTime >= diveVideo.duration - DIVE_UI_BEFORE) diveIn();
   });
@@ -250,7 +343,7 @@
     if (mode === 'diving') { mode = 'dived'; diveIn(); lockedUntil = performance.now() + 700; lock(false); }
   });
   diveVideo.addEventListener('pause', () => setTimeout(() => {
-    if (mode === 'diving' && diveVideo.paused && !diveVideo.ended) diveVideo.play().catch(() => {});
+    if (mode === 'diving' && !useSeqDive && diveVideo.paused && !diveVideo.ended) diveVideo.play().catch(() => {});
   }, 150));
 
   // ---------- sterowanie sekwencją gestem (desktop i telefon) ----------
@@ -301,11 +394,12 @@
   // ---------- telefon: okno kadru podąża za ptakiem (filmy są poziome, ekran pionowy) ----------
   const mobile = window.matchMedia('(max-width: 760px)');
   let track = null, camP = null;
-  fetch('assets/tor-ptaka.json?v=8').then((r) => r.json()).then((j) => { track = j; }).catch(() => {});
+  fetch('assets/tor-ptaka.json?v=9').then((r) => r.json()).then((j) => { track = j; }).catch(() => {});
 
   function birdX(name, el) {
     const t = track && track[name];
     if (!t) return 0.5;
+    if (el === null) return t.end != null ? t.end : t.x[t.x.length - 1];   // kadr końcowy (statyczny)
     const i = Math.min(t.x.length - 1, Math.max(0, Math.floor((el.currentTime || 0) * t.fps)));
     return t.x[i];
   }
@@ -319,16 +413,21 @@
   function frame() {
     requestAnimationFrame(frame);
     if (!mobile.matches || !track) return;
-    const active = mode === 'hero' ? video : diveVideo;
-    const target = posFor(birdX(mode === 'hero' ? ver.track : 'nurek', active), active);
+    const hero_ = mode === 'hero';
+    const active = hero_ ? (useSeqIntro ? introSeq : video) : (useSeqDive ? diveSeq : diveVideo);
+    // gdy widać kadr statyczny (zablokowane wideo), kadrujemy według ostatniej klatki — ptak na środku
+    const stillShown = +gsap.getProperty(still, 'opacity') > 0.5 && !(hero_ ? useSeqIntro : useSeqDive);
+    const ref = stillShown ? null : active;
+    const target = posFor(birdX(hero_ ? ver.track : 'nurek', ref), active);
     camP = camP === null ? target : camP + (target - camP) * 0.22;
     const v = camP.toFixed(2) + '% 50%';
     video.style.objectPosition = v; diveVideo.style.objectPosition = v; still.style.objectPosition = v;
+    introSeq.el.style.objectPosition = v; diveSeq.el.style.objectPosition = v;
     wordLayer.style.webkitMaskPosition = v; wordLayer.style.maskPosition = v;
   }
   requestAnimationFrame(frame);
   mobile.addEventListener('change', () => {
-    if (!mobile.matches) [video, diveVideo, still].forEach((el) => { el.style.objectPosition = ''; });
+    if (!mobile.matches) [video, diveVideo, still, introSeq.el, diveSeq.el].forEach((el) => { el.style.objectPosition = ''; });
     if (!mobile.matches) { wordLayer.style.webkitMaskPosition = ''; wordLayer.style.maskPosition = ''; }
   });
 
